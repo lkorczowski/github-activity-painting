@@ -71,6 +71,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
 .cell.off { background: var(--off); outline-color: transparent; }
 .editable .cell:not(.off) { cursor: crosshair; }
 .editable .cell:not(.off):hover { outline: 2px solid var(--focus); outline-offset: -1px; }
+.cell.mine { box-shadow: inset 0 0 0 2px var(--focus); }
 .cell.manual { box-shadow: inset 0 0 0 1px rgba(127,127,127,0.35); }
 .legend { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .legend .cell { display: inline-block; }
@@ -137,6 +138,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
     You can still design and export a JSON file here, then run <code>python3 paint.py apply design.json</code>.
   </div>
   <div class="banner" id="branchWarn" hidden></div>
+  <div class="banner info" id="communityBanner" hidden></div>
 
   <!-- ===================== DESIGN ===================== -->
   <section class="card" id="designCard">
@@ -257,6 +259,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
           <label class="block" style="flex:1.4">Author email <input type="email" id="authorEmail" autocomplete="email"></label>
         </div>
         <p class="hint" style="margin-top:-4px">Must be an email verified on your GitHub account (e.g. <code>ID+login@users.noreply.github.com</code>), otherwise the commits will not count.</p>
+        <p class="hint" id="emailWarn" style="margin-top:-4px" hidden></p>
         <div class="row">
           <button class="primary" id="paintBtn">Create commits</button>
           <button class="danger" id="deleteBtn">Delete painted commits</button>
@@ -284,7 +287,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
       </div>
     </div>
     <div class="graph-wrap"><div class="graph" id="repoGraph"></div></div>
-    <p class="hint">What the branch contains right now (painted + regular commits), using the contrast above. Pushed to your default branch, this is what your profile will show (on top of your other contributions).</p>
+    <p class="hint" id="repoHint">What the branch contains right now (painted + regular commits), using the contrast above. Pushed to your default branch, this is what your profile will show (on top of your other contributions).</p>
   </section>
 </main>
 
@@ -601,8 +604,11 @@ function renderRepo() {
     const cell = win.cells[i];
     const n = (server.painted[cell.date] || 0) + (server.other[cell.date] || 0);
     div.dataset.l = cell.valid ? levelOf(n) : 0;
+    div.classList.toggle("mine", !!(server.community && cell.valid && (server.mine || {})[cell.date]));
   });
-  $("repoSummary").innerHTML = `<b>${server.painted_total.toLocaleString()}</b> painted + <b>${server.other_total.toLocaleString()}</b> other commits`;
+  $("repoSummary").innerHTML = server.community
+    ? `<b>${server.painted_total.toLocaleString()}</b> painted commits on the wall, <b>${server.mine_total.toLocaleString()}</b> of them yours (not merged yet)`
+    : `<b>${server.painted_total.toLocaleString()}</b> painted + <b>${server.other_total.toLocaleString()}</b> other commits`;
 }
 
 function renderStatus() {
@@ -610,20 +616,46 @@ function renderStatus() {
   if (!s) return;
   const remote = s.remote ? s.remote.replace(/^https?:\/\/[^@/]*@/, "https://") : "no remote";
   $("repoLine").innerHTML = "";
-  [["Repository", remote], ["Branch", s.branch || "(detached)"], ["Painted", `${s.painted_total.toLocaleString()} commits`]].forEach(([k, v]) => {
+  [["Repository", remote], ["Branch", s.branch || "(detached)"], [s.community ? "Your painting" : "Painted", `${s.mine_total.toLocaleString()} commits`]].forEach(([k, v]) => {
     const span = document.createElement("span"); span.append(k + ": ");
     const b = document.createElement("b"); b.textContent = v; span.appendChild(b); $("repoLine").appendChild(span);
   });
   const warn = $("branchWarn");
+  const cb = $("communityBanner"), c = s.community;
+  cb.hidden = !c;
+  if (c) {
+    cb.innerHTML = "";
+    const add = (tag, text) => { const el = document.createElement(tag); el.textContent = text; cb.appendChild(el); return el; };
+    add("b", "Community wall mode. ");
+    cb.append(`You paint on top of everyone's painting from ${c.upstream} (branch “${c.branch}”). `);
+    cb.append(c.can_open_pr
+      ? "When you are done, “Push & open pull request”: the pull request is checked automatically and merged if it only contains your painted commits."
+      : "To take part, fork the repository on GitHub and clone your fork: pull requests are opened from forks.");
+    $("pushBtn").textContent = c.can_open_pr ? "Push & open pull request" : "Push to GitHub";
+    $("repoCard").querySelector("h2").lastChild.textContent = " The community wall (everyone's painting + yours)";
+    $("repoHint").textContent = "Everything already merged on the shared wall plus your painting (outlined in blue). Each painter's commits show on their own profile; this combined picture is the collaborative painting.";
+  }
   if (s.detached) { warn.hidden = false; warn.textContent = "HEAD is detached: check out your default branch (e.g. git switch main) before painting."; }
-  else if (s.default_branch && s.branch !== s.default_branch) {
+  else if (!c && s.default_branch && s.branch !== s.default_branch) {
     warn.hidden = false;
     warn.textContent = `You are on “${s.branch}” but the default branch is “${s.default_branch}”. GitHub only counts commits on the default branch.`;
   } else warn.hidden = true;
   if (!state.author.name && s.identity.name) $("authorName").value = state.author.name = s.identity.name;
   if (!state.author.email && s.identity.email) $("authorEmail").value = state.author.email = s.identity.email;
-  if (s.today && s.today !== win.end && s.today === iso(new Date())) { /* same day, nothing to do */ }
+  if (c && c.suggested_email && !state.author.email.endsWith("@users.noreply.github.com")) {
+    $("authorEmail").value = state.author.email = c.suggested_email; save();
+  }
+  checkEmail();
   renderRepo();
+}
+
+/** In community mode the email must be the PR author's GitHub no-reply address. */
+function checkEmail() {
+  const c = server && server.community, w = $("emailWarn");
+  const ok = !c || !c.login || (state.author.email || "").toLowerCase().endsWith(`+${c.login.toLowerCase()}@users.noreply.github.com`)
+    || (state.author.email || "").toLowerCase() === `${c.login.toLowerCase()}@users.noreply.github.com`;
+  w.hidden = ok;
+  if (!ok) w.textContent = `⚠️ The community wall only accepts commits authored with your GitHub no-reply address (${c.suggested_email || "ID+" + c.login + "@users.noreply.github.com"}), so that nobody can paint on someone else's profile.`;
 }
 
 function renderAll() { computeText(); computeImage(); renderDesign(); renderRepo(); }
@@ -705,8 +737,8 @@ function setupTooltips() {
       const n = levelCounts()[+el.dataset.l || 0];
       text = `${n} commit${n === 1 ? "" : "s"} on ${date} · level ${el.dataset.l || 0}`;
     } else if (graph.id === "repoGraph" && server) {
-      const p = server.painted[el.dataset.date] || 0, o = server.other[el.dataset.date] || 0;
-      text = `${p} painted + ${o} other on ${date}`;
+      const p = server.painted[el.dataset.date] || 0, o = server.other[el.dataset.date] || 0, m = (server.mine || {})[el.dataset.date] || 0;
+      text = server.community ? `${p} painted (${m} yours) + ${o} other on ${date}` : `${p} painted + ${o} other on ${date}`;
     } else if (graph.id === "ghGraph" && ghCounts) {
       const n = ghCounts[el.dataset.date] || 0;
       text = `${n} contribution${n === 1 ? "" : "s"} on ${date}`;
@@ -906,7 +938,7 @@ function init() {
 
   // author
   bindValue("authorName", state.author, "name", save);
-  bindValue("authorEmail", state.author, "email", save);
+  bindValue("authorEmail", state.author, "email", () => { save(); checkEmail(); });
 
   // commits
   $("paintBtn").onclick = e => busy(e.target, async () => {
@@ -914,7 +946,7 @@ function init() {
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     if (!total && !confirm("The design is empty. Delete the painted commits instead?")) return;
     if (!state.author.email) throw new Error("Fill in the author email first");
-    const prev = server ? server.painted_total : 0;
+    const prev = server ? server.mine_total : 0;
     if (!confirm(`Create ${total.toLocaleString()} commits on ${Object.keys(counts).length} days` +
                  (prev ? `, replacing the ${prev.toLocaleString()} painted commits already on “${server.branch}”` : ` on “${server.branch}”`) + "?")) return;
     const r = await api("/api/paint", { counts, name: state.author.name, email: state.author.email, replace: true });
@@ -923,8 +955,8 @@ function init() {
     toast(msg); log(msg);
   });
   $("deleteBtn").onclick = e => busy(e.target, async () => {
-    if (!server.painted_total) { toast("There are no painted commits on this branch"); return; }
-    if (!confirm(`Delete the ${server.painted_total.toLocaleString()} painted commits from “${server.branch}”? Other commits are kept.`)) return;
+    if (!server.mine_total) { toast(server.community ? "You have no unmerged painted commits (merged ones are part of the wall)" : "There are no painted commits on this branch"); return; }
+    if (!confirm(`Delete the ${server.mine_total.toLocaleString()} painted commits from “${server.branch}”? Other commits are kept.`)) return;
     const r = await api("/api/clear", {});
     server = r.status; renderStatus();
     const msg = `Deleted ${r.removed.toLocaleString()} painted commits. Push (force) to update GitHub.`;
@@ -934,15 +966,20 @@ function init() {
     if (!confirm(`Run “git push --force-with-lease -u origin ${server.branch}”?`)) return;
     const r = await api("/api/push", {});
     server = r.status; renderStatus();
-    toast("Pushed! Your profile can take a few minutes to update."); log(r.output || "Pushed.");
+    log(r.output || "Pushed.");
+    if (r.pr_url) {
+      toast("Pushed! Opening the pull request page — click “Create pull request”.");
+      log("Open your pull request: " + r.pr_url);
+      window.open(r.pr_url, "_blank", "noopener");
+    } else toast("Pushed! Your profile can take a few minutes to update.");
   });
   $("refreshBtn").onclick = () => refresh();
   $("loadRepoBtn").onclick = () => {
-    if (!server || !server.painted_total) { toast("No painted commits to load"); return; }
+    if (!server || !server.mine_total) { toast("No painted commits of yours to load"); return; }
     if (!confirm("Replace the design (drawing, text and picture) with the painting currently in the repository?")) return;
     pushUndo();
     state.manual = {};
-    win.cells.forEach(c => { if (c.valid) state.manual[c.date] = levelOf(server.painted[c.date] || 0); });
+    win.cells.forEach(c => { if (c.valid) state.manual[c.date] = levelOf(server.mine[c.date] || 0); });
     state.text.value = ""; $("textValue").value = ""; computeText(); clearImage();
     toast("Repository painting loaded into the designer");
   };

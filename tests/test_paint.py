@@ -139,5 +139,77 @@ class GitHubParserTests(unittest.TestCase):
                          {"2026-01-04": 0, "2026-01-05": 1, "2026-01-06": 1204})
 
 
+class CommunityTests(RepoTestCase):
+    """Painting on top of a shared wall, and the CI check of pull requests."""
+
+    LOGIN, USER_ID = "tester", 123
+    EMAIL = "123+tester@users.noreply.github.com"
+
+    def setUp(self):
+        super().setUp()
+        # Someone else's painting already merged on the wall.
+        self.repo.paint({"2026-03-01": 4}, name="Other", email="9+other@users.noreply.github.com")
+        run(self.path, "branch", "wall")
+        self.repo.base = "wall"
+        self.today = paint.dt.date(2026, 10, 10)
+
+    def validate(self, login=LOGIN, user_id=USER_ID):
+        return paint.validate_painting(self.repo, "wall", "HEAD", login, user_id, today=self.today)
+
+    def test_base_commits_are_protected(self):
+        self.repo.paint({"2026-04-01": 2}, name="T", email=self.EMAIL)
+        st = self.repo.status()
+        self.assertEqual(st["painted_total"], 6)
+        self.assertEqual(st["mine"], {"2026-04-01": 2})
+        self.repo.paint({"2026-05-01": 1}, name="T", email=self.EMAIL)  # repaint replaces only ours
+        self.assertEqual(self.repo.status()["painted"], {"2026-03-01": 4, "2026-05-01": 1})
+        self.assertEqual(self.repo.clear(), 1)
+        self.assertEqual(run(self.path, "rev-parse", "HEAD"), run(self.path, "rev-parse", "wall"))
+
+    def test_valid_painting(self):
+        self.repo.paint({"2026-04-01": 2, "2026-04-02": 1}, name="T", email=self.EMAIL)
+        result = self.validate()
+        self.assertEqual(result["verdict"], "valid", result["problems"])
+        self.assertEqual((result["commits"], result["days"]), (3, 2))
+
+    def test_someone_elses_email_is_rejected(self):
+        self.repo.paint({"2026-04-01": 2}, name="T", email="victim@example.com")
+        result = self.validate()
+        self.assertEqual(result["verdict"], "invalid")
+        self.assertIn("no-reply", result["problems"][0])
+
+    def test_file_changes_are_rejected(self):
+        self.repo.paint({"2026-04-01": 1}, name="T", email=self.EMAIL)
+        (self.path / "paint.py").write_text("import os; os.system('evil')")
+        run(self.path, "add", "paint.py")
+        run(self.path, "-c", f"user.email={self.EMAIL}", "commit", "-q", "--date", "2026-04-02T12:00:00+00:00",
+            "-m", "Paint 2026-04-02 (1/1)\n\nActivity-Painter: true")
+        result = self.validate()
+        self.assertEqual(result["verdict"], "invalid")
+        self.assertTrue(any("changes files" in p and "paint.py" in p for p in result["problems"]))
+
+    def test_old_dates_are_rejected(self):
+        self.repo.paint({"2024-01-01": 1}, name="T", email=self.EMAIL)
+        problems = " ".join(self.validate()["problems"])
+        self.assertIn("outside the last year", problems)
+
+    def test_code_pull_request_is_not_a_painting(self):
+        self.commit("b.txt", "Improve the docs")
+        self.assertEqual(self.validate()["verdict"], "not-a-painting")
+
+    def test_wall_svg(self):
+        self.repo.paint({"2026-04-01": 2}, name="T", email=self.EMAIL)
+        svg = paint.wall_svg(self.repo, today=self.today)
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("2 painters", svg)
+        self.assertIn("6 painted commits", svg)
+        self.assertIn("4 painted commits on 2026-03-01", svg)
+
+    def test_github_slug(self):
+        self.assertEqual(paint.github_slug("git@github.com:me/repo.git"), ("me", "repo"))
+        self.assertEqual(paint.github_slug("https://github.com/me/repo"), ("me", "repo"))
+        self.assertIsNone(paint.github_slug("/tmp/repo.git"))
+
+
 if __name__ == "__main__":
     unittest.main()

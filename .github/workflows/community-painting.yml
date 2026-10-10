@@ -1,0 +1,94 @@
+# Checks pull requests that add a painting to the community wall and merges
+# them automatically when they contain nothing but empty painted commits.
+#
+# Security: this runs with write access (pull_request_target), so it NEVER
+# checks out or runs anything from the pull request. The PR commits are only
+# fetched as git objects and inspected by paint.py taken from the default
+# branch. Anything that changes a file is never merged automatically.
+name: Community painting
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: community-painting-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      LOGIN: ${{ github.event.pull_request.user.login }}
+      USER_ID: ${{ github.event.pull_request.user.id }}
+      BASE_REF: ${{ github.event.pull_request.base.ref }}
+    steps:
+      - name: Check out the default branch (trusted code only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the pull request commits as data
+        run: |
+          git fetch --no-tags origin "+refs/pull/${PR}/head:refs/painting/head"
+          test "$(git rev-parse refs/painting/head)" = "$HEAD_SHA"
+
+      - name: Validate the painting
+        run: |
+          python3 paint.py validate --base "origin/${BASE_REF}" --head "$HEAD_SHA" \
+            --login "$LOGIN" --user-id "$USER_ID" --json result.json
+          echo "VERDICT=$(python3 -c 'import json; print(json.load(open("result.json"))["verdict"])')" >> "$GITHUB_ENV"
+
+      - name: Explain what is wrong
+        if: env.VERDICT == 'invalid'
+        run: |
+          python3 - <<'PY'
+          import json
+          r = json.load(open("result.json"))
+          lines = ["### 🎨 This painting can't be merged automatically", "",
+                   "Only empty commits created by `paint.py`, authored with **your** GitHub no-reply email, "
+                   "dated within the last year, can join the community wall:", ""]
+          lines += [f"- {p}" for p in r["problems"]]
+          lines += ["", "Fix it with `python3 paint.py community` (it sets everything up), then push again: "
+                    "this pull request is re-checked on every push.", "",
+                    "If this pull request is meant to change the tool itself, ignore this message: "
+                    "the maintainer will review it."]
+          open("comment.md", "w").write("\n".join(lines) + "\n")
+          PY
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md --edit-last \
+            || gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+
+      - name: Merge the painting
+        id: merge
+        if: env.VERDICT == 'valid'
+        run: |
+          python3 - <<'PY'
+          import json
+          r = json.load(open("result.json"))
+          open("comment.md", "w").write(
+              f"### 🎨 Welcome to the community wall!\n\n{r['commits']} painted commits on {r['days']} days "
+              "passed the checks and are merged. They will appear on your profile within a few minutes.\n")
+          PY
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge --match-head-commit "$HEAD_SHA" \
+            --subject "Community painting by @${LOGIN} (#${PR})"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+  wall:
+    needs: check
+    if: needs.check.outputs.merged == 'true'
+    uses: ./.github/workflows/wall.yml
+    with:
+      ref: ${{ github.event.repository.default_branch }}

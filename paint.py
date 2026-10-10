@@ -46,6 +46,9 @@ TRAILER = f"{TRAILER_KEY}: true"
 HTML_FILE = "github-activity-painter.html"
 MAX_COMMITS_PER_DAY = 10_000
 DEFAULT_PORT = 8765
+UPSTREAM_URL = "https://github.com/lkorczowski/github-activity-painting.git"
+COMMUNITY_BRANCH = "my-painting"
+PAINT_MESSAGE = re.compile(rf"Paint (\d{{4}}-\d{{2}}-\d{{2}}) \((\d+)/(\d+)\)\n\n{TRAILER}\n*")
 HERE = Path(__file__).resolve().parent
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
@@ -83,6 +86,10 @@ class Repo:
         if not root:
             raise PainterError(f"{self.path} is not inside a git repository")
         self.path = Path(root)
+        # Commits reachable from `base` (e.g. the shared community wall) are
+        # never removed or rewritten: only the painting made on top counts as ours.
+        self.base: str | None = None
+        self.community: dict | None = None
 
     def git(self, *args: str, input: bytes | None = None, check: bool = True) -> bytes:
         return git(*args, input=input, cwd=self.path, check=check)
@@ -116,27 +123,37 @@ class Repo:
 
     # -- reading the painting --------------------------------------------- #
 
+    def own_range(self) -> str:
+        """Revision range holding the commits this tool may rewrite."""
+        return f"{self.base}..HEAD" if self.base else "HEAD"
+
     def painted_shas(self) -> set[str]:
         if not self.head():
             return set()
-        out = self.text("rev-list", "HEAD", f"--grep=^{TRAILER_KEY}: true$")
+        out = self.text("rev-list", self.own_range(), f"--grep=^{TRAILER_KEY}: true$")
         return set(out.split())
 
-    def daily_counts(self) -> dict:
-        """Commits per day reachable from HEAD, split into painted / other."""
+    def _counts(self, rev: str) -> tuple[dict[str, int], dict[str, int]]:
         painted: dict[str, int] = {}
         other: dict[str, int] = {}
-        if self.head():
-            fmt = f"%ad%x09%(trailers:key={TRAILER_KEY},valueonly,separator=%x2C)"
-            # format: keeps the commit's own time zone, like GitHub does.
-            out = self.text("log", "HEAD", "--date=format:%Y-%m-%d", f"--format={fmt}")
-            for line in out.splitlines():
-                day, _, trailer = line.partition("\t")
-                if not day:
-                    continue
-                bucket = painted if trailer.strip() == "true" else other
-                bucket[day] = bucket.get(day, 0) + 1
-        return {"painted": painted, "other": other}
+        fmt = f"%ad%x09%(trailers:key={TRAILER_KEY},valueonly,separator=%x2C)"
+        # format: keeps the commit's own time zone, like GitHub does.
+        out = self.text("log", rev, "--date=format:%Y-%m-%d", f"--format={fmt}")
+        for line in out.splitlines():
+            day, _, trailer = line.partition("\t")
+            if not day:
+                continue
+            bucket = painted if trailer.strip() == "true" else other
+            bucket[day] = bucket.get(day, 0) + 1
+        return painted, other
+
+    def daily_counts(self) -> dict:
+        """Commits per day reachable from HEAD: painted / other, and our own painting."""
+        if not self.head():
+            return {"painted": {}, "other": {}, "mine": {}}
+        painted, other = self._counts("HEAD")
+        mine = self._counts(self.own_range())[0] if self.base else painted
+        return {"painted": painted, "other": other, "mine": mine}
 
     def status(self) -> dict:
         counts = self.daily_counts()
@@ -153,6 +170,9 @@ class Repo:
             "other": counts["other"],
             "painted_total": sum(counts["painted"].values()),
             "other_total": sum(counts["other"].values()),
+            "mine": counts["mine"],
+            "mine_total": sum(counts["mine"].values()),
+            "community": self.community,
             "today": dt.date.today().isoformat(),
         }
 
@@ -383,6 +403,209 @@ def fetch_github_contributions(login: str) -> dict[str, int]:
 
 
 # --------------------------------------------------------------------------- #
+# community wall
+# --------------------------------------------------------------------------- #
+
+def github_slug(url: str) -> tuple[str, str] | None:
+    """('owner', 'repo') of a github.com remote URL, or None."""
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$", url or "")
+    return (m.group(1), m.group(2)) if m else None
+
+
+def noreply_emails(login: str, user_id: int | str | None) -> set[str]:
+    emails = {f"{login}@users.noreply.github.com".lower()}
+    if user_id:
+        emails.add(f"{user_id}+{login}@users.noreply.github.com".lower())
+    return emails
+
+
+def fetch_github_user_id(login: str) -> int | None:
+    req = urllib.request.Request(f"https://api.github.com/users/{login}",
+                                 headers={"User-Agent": "github-activity-painter"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return int(json.load(resp)["id"])
+    except (urllib.error.URLError, OSError, ValueError, KeyError):
+        return None
+
+
+def setup_community(repo: Repo, upstream_url: str = UPSTREAM_URL, branch: str = COMMUNITY_BRANCH) -> dict:
+    """Prepare `branch` on top of the shared wall and remember it as the base.
+
+    Your painting is then the commits on top of the upstream default branch; a
+    pull request with them is checked and merged automatically.
+    """
+    up = github_slug(upstream_url)
+    origin = repo.remote_url()
+    mine = github_slug(origin)
+    remotes = repo.text("remote").split()
+    same = (mine and up and mine[0].lower() == up[0].lower() and mine[1].lower() == up[1].lower()) \
+        or origin.rstrip("/") == upstream_url.rstrip("/")
+    if same:
+        remote = "origin"            # cloned the shared repository itself
+    else:
+        remote = "upstream"
+        if remote not in remotes:
+            repo.git("remote", "add", remote, upstream_url)
+        elif repo.text("remote", "get-url", remote) != upstream_url:
+            repo.git("remote", "set-url", remote, upstream_url)
+    print(f"Fetching the community wall from {upstream_url} ...")
+    repo.git("fetch", "--no-tags", remote)
+    head_ref = repo.text("ls-remote", "--symref", remote, "HEAD")
+    m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", head_ref)
+    if not m:
+        raise PainterError(f"could not find the default branch of {upstream_url}")
+    default = m.group(1)
+    base = f"refs/remotes/{remote}/{default}"
+    current = repo.text("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if current != branch:
+        if repo.text("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False):
+            repo.git("switch", branch)
+        else:
+            repo.git("switch", "-c", branch, base)
+    repo.base = base
+
+    user_id = fetch_github_user_id(mine[0]) if mine else None
+    pr_url = None
+    if up and mine and remote == "upstream":
+        pr_url = f"https://github.com/{up[0]}/{up[1]}/compare/{default}...{mine[0]}:{mine[1]}:{branch}?expand=1"
+    repo.community = {
+        "upstream": f"{up[0]}/{up[1]}" if up else upstream_url,
+        "default_branch": default,
+        "branch": branch,
+        "fork": f"{mine[0]}/{mine[1]}" if mine else None,
+        "can_open_pr": pr_url is not None,
+        "pr_url": pr_url,
+        "login": mine[0] if mine and remote == "upstream" else None,
+        "suggested_email": (f"{user_id}+{mine[0]}@users.noreply.github.com"
+                            if user_id and remote == "upstream" else None),
+    }
+    return repo.community
+
+
+def validate_painting(repo: Repo, base: str, head: str, login: str, user_id: int | str | None,
+                      today: dt.date | None = None, max_commits: int = 5000,
+                      max_per_day: int = 100) -> dict:
+    """Check that base..head is nothing but a painting by `login`.
+
+    Only reads commit metadata: nothing from the commits is checked out or run.
+    Returns {"verdict": "valid" | "invalid" | "not-a-painting", "problems": [...], ...}.
+    """
+    today = today or dt.date.today()
+    oldest = today - dt.timedelta(days=372)
+    allowed = noreply_emails(login, user_id)
+    expected = f"{user_id}+{login}@users.noreply.github.com" if user_id else f"{login}@users.noreply.github.com"
+    raw = repo.git("log", "--no-renames", "--name-only", "--date=format:%Y-%m-%d",
+                   "--format=%x1e%H%x00%P%x00%ae%x00%ad%x00%B%x00", f"{base}..{head}")
+    records = [r for r in raw.decode(errors="replace").split("\x1e") if r.strip()]
+    found: dict[str, list] = {}     # kind -> [first message, count]
+
+    def problem(kind: str, message: str) -> None:
+        entry = found.setdefault(kind, [message, 0])
+        entry[1] += 1
+
+    per_day: dict[str, int] = {}
+    painted = 0
+    for rec in records:
+        sha, parents, email, day, body, files = (rec.split("\x00") + [""] * 6)[:6]
+        short = sha[:8]
+        if TRAILER in body:
+            painted += 1
+        if len(parents.split()) != 1:
+            problem("merge", f"`{short}` is a merge commit")
+        if files.strip():
+            changed = ", ".join(f"`{f}`" for f in files.split()[:5])
+            problem("files", f"`{short}` changes files ({changed}): painted commits must be empty")
+        msg = PAINT_MESSAGE.fullmatch(body.strip("\n") + "\n")
+        if not msg:
+            problem("message", f"`{short}` does not have a painting commit message")
+        elif msg.group(1) != day:
+            problem("date-msg", f"`{short}` is dated {day} but its message says {msg.group(1)}")
+        if email.lower() not in allowed:
+            problem("email", f"`{short}` is authored by `{email}` instead of your GitHub no-reply "
+                             f"address `{expected}`")
+        try:
+            when = dt.date.fromisoformat(day)
+            if not oldest <= when <= today + dt.timedelta(days=1):
+                problem("window", f"`{short}` is dated {day}, outside the last year")
+        except ValueError:
+            problem("date", f"`{short}` has an invalid date")
+        per_day[day] = per_day.get(day, 0) + 1
+
+    problems = [msg if n == 1 else f"{msg} (and {n - 1} more commit{'s' if n > 2 else ''} like this)"
+                for msg, n in found.values()]
+    if not records or not painted:
+        return {"verdict": "not-a-painting", "problems": [], "commits": len(records), "days": 0}
+    if len(records) > max_commits:
+        problems.append(f"{len(records)} commits: the limit is {max_commits} per pull request")
+    busy = sorted(d for d, n in per_day.items() if n > max_per_day)
+    if busy:
+        problems.append(f"more than {max_per_day} commits on {len(busy)} day(s), e.g. {busy[0]}")
+    return {"verdict": "invalid" if problems else "valid", "problems": problems,
+            "commits": len(records), "days": len(per_day)}
+
+
+def year_window(today: dt.date) -> tuple[dt.date, dt.date, int]:
+    """(first day shown, first Sunday column, number of weeks) like the GitHub graph."""
+    try:
+        start = today.replace(year=today.year - 1)
+    except ValueError:  # Feb 29
+        start = today.replace(year=today.year - 1, day=28)
+    first = start - dt.timedelta(days=(start.weekday() + 1) % 7)
+    cols = ((today - first).days) // 7 + 1
+    return start, first, cols
+
+
+def wall_svg(repo: Repo, today: dt.date | None = None) -> str:
+    """SVG picture of every painted commit of the branch (the community wall)."""
+    today = today or dt.date.today()
+    start, first, cols = year_window(today)
+    counts: dict[str, int] = {}
+    painters: set[str] = set()
+    if repo.head():
+        out = repo.text("log", "HEAD", f"--grep=^{TRAILER_KEY}: true$", "--date=format:%Y-%m-%d",
+                        f"--since={(start - dt.timedelta(days=2)).isoformat()}", "--format=%ad %ae")
+        for line in out.splitlines():
+            day, _, email = line.partition(" ")
+            if start.isoformat() <= day <= today.isoformat():
+                counts[day] = counts.get(day, 0) + 1
+                painters.add(email.lower())
+    top = max(counts.values(), default=0)
+    step, size, left, top_pad = 14, 11, 32, 22
+    width, height = left + cols * step + 8, top_pad + 7 * step + 28
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="10">',
+        "<style>.t{fill:#59636e}.l0{fill:#ebedf0}.l1{fill:#9be9a8}.l2{fill:#40c463}.l3{fill:#30a14e}.l4{fill:#216e39}"
+        "@media (prefers-color-scheme:dark){.t{fill:#9198a1}.l0{fill:#151b23}.l1{fill:#033a16}.l2{fill:#196c2e}"
+        ".l3{fill:#2ea043}.l4{fill:#56d364}}</style>",
+    ]
+    for row, name in ((1, "Mon"), (3, "Wed"), (5, "Fri")):
+        parts.append(f'<text class="t" x="0" y="{top_pad + row * step + 9}">{name}</text>')
+    last_month, last_label = None, -9
+    for c in range(cols):
+        days = [first + dt.timedelta(days=c * 7 + r) for r in range(7)]
+        shown = [d for d in days if start <= d <= today]
+        if shown and shown[-1].month != last_month:
+            last_month = shown[-1].month
+            if c - last_label >= 3 and c < cols - 1:
+                parts.append(f'<text class="t" x="{left + c * step}" y="12">{shown[-1].strftime("%b")}</text>')
+                last_label = c
+        for r, d in enumerate(days):
+            if not start <= d <= today:
+                continue
+            n = counts.get(d.isoformat(), 0)
+            level = 0 if not n else max(1, min(4, -(-4 * n // top)))
+            parts.append(f'<rect class="l{level}" x="{left + c * step}" y="{top_pad + r * step}" '
+                         f'width="{size}" height="{size}" rx="2"><title>{n} painted commits on {d.isoformat()}</title></rect>')
+    total = sum(counts.values())
+    parts.append(f'<text class="t" x="{left}" y="{height - 6}">{len(painters)} painter{"s" if len(painters) != 1 else ""}'
+                 f' · {total} painted commits · updated {today.isoformat()}</text>')
+    parts.append("</svg>")
+    return "\n".join(parts) + "\n"
+
+
+# --------------------------------------------------------------------------- #
 # web server
 # --------------------------------------------------------------------------- #
 
@@ -445,7 +668,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/clear":
                     result = {"removed": self.repo.clear()}
                 elif self.path == "/api/push":
-                    result = {"output": self.repo.push()}
+                    result = {"output": self.repo.push(),
+                              "pr_url": (self.repo.community or {}).get("pr_url")}
                 else:
                     return self._send(404, b"not found", "text/plain")
                 result["status"] = self.repo.status()
@@ -486,10 +710,24 @@ def serve(repo: Repo, port: int, open_browser: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Paint your GitHub contribution graph.")
     parser.add_argument("--repo", default=str(HERE), help="git repository to paint (default: this one)")
+    parser.add_argument("--base", help="never touch commits reachable from this ref (e.g. upstream/main)")
     sub = parser.add_subparsers(dest="cmd")
     p_serve = sub.add_parser("serve", help="start the web interface (default)")
     p_serve.add_argument("--port", type=int, default=DEFAULT_PORT)
     p_serve.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    p_comm = sub.add_parser("community", help="paint on the shared community wall (opens a pull request)")
+    p_comm.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p_comm.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    p_comm.add_argument("--upstream", default=UPSTREAM_URL, help="shared repository URL")
+    p_comm.add_argument("--branch", default=COMMUNITY_BRANCH, help="local branch for your painting")
+    p_val = sub.add_parser("validate", help="(CI) check that BASE..HEAD only contains a painting")
+    p_val.add_argument("--base", dest="val_base", required=True)
+    p_val.add_argument("--head", required=True)
+    p_val.add_argument("--login", required=True, help="GitHub login of the pull request author")
+    p_val.add_argument("--user-id", default="", help="GitHub numeric user id of the author")
+    p_val.add_argument("--json", dest="json_out", help="write the result as JSON to this file")
+    p_wall = sub.add_parser("wall", help="draw every painted commit of the branch as an SVG")
+    p_wall.add_argument("output", help="SVG file to write")
     sub.add_parser("status", help="show painted commits per day")
     p_apply = sub.add_parser("apply", help="paint an exported design (replaces the current painting)")
     p_apply.add_argument("design", help="design JSON exported from the interface")
@@ -502,9 +740,24 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         repo = Repo(Path(args.repo))
+        repo.base = args.base
         cmd = args.cmd or "serve"
         if cmd == "serve":
             serve(repo, getattr(args, "port", DEFAULT_PORT), not getattr(args, "no_browser", False))
+        elif cmd == "community":
+            info = setup_community(repo, args.upstream, args.branch)
+            print(f"Community mode: painting on branch '{info['branch']}' on top of {info['upstream']}.")
+            serve(repo, args.port, not args.no_browser)
+        elif cmd == "validate":
+            result = validate_painting(repo, args.val_base, args.head, args.login, args.user_id)
+            if args.json_out:
+                Path(args.json_out).write_text(json.dumps(result))
+            print(f"{result['verdict']}: {result['commits']} commits on {result['days']} days")
+            for problem in result["problems"]:
+                print(f"  - {problem}")
+        elif cmd == "wall":
+            Path(args.output).write_text(wall_svg(repo))
+            print(f"Wrote {args.output}")
         elif cmd == "status":
             st = repo.status()
             print(f"Branch: {st['branch'] or '(detached)'}   author: {st['identity']['name']} <{st['identity']['email']}>")
