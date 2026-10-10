@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub Activity Painter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1' y='1' width='6' height='6' rx='1' fill='%2340c463'/%3E%3Crect x='9' y='1' width='6' height='6' rx='1' fill='%23216e39'/%3E%3Crect x='1' y='9' width='6' height='6' rx='1' fill='%239be9a8'/%3E%3Crect x='9' y='9' width='6' height='6' rx='1' fill='%2330a14e'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f8fa; --panel: #ffffff; --text: #1f2328; --muted: #59636e; --border: #d1d9e0;
+  --accent: #1f883d; --accent-text: #ffffff; --danger: #cf222e; --warn-bg: #fff8c5; --warn-border: #d4a72c;
+  --info-bg: #ddf4ff; --info-border: #54aeff;
+  --l0: #ebedf0; --l1: #9be9a8; --l2: #40c463; --l3: #30a14e; --l4: #216e39;
+  --off: transparent; --cell-border: rgba(31,35,40,0.06); --focus: #0969da;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1117; --panel: #151b23; --text: #e6edf3; --muted: #9198a1; --border: #3d444d;
+    --accent: #238636; --accent-text: #ffffff; --danger: #f85149; --warn-bg: #3b2e0a; --warn-border: #9e6a03;
+    --info-bg: #0c2d6b; --info-border: #1f6feb;
+    --l0: #151b23; --l1: #033a16; --l2: #196c2e; --l3: #2ea043; --l4: #56d364;
+    --cell-border: rgba(240,246,252,0.10); --focus: #4493f8;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117; --panel: #151b23; --text: #e6edf3; --muted: #9198a1; --border: #3d444d;
+  --accent: #238636; --accent-text: #ffffff; --danger: #f85149; --warn-bg: #3b2e0a; --warn-border: #9e6a03;
+  --info-bg: #0c2d6b; --info-border: #1f6feb;
+  --l0: #151b23; --l1: #033a16; --l2: #196c2e; --l3: #2ea043; --l4: #56d364;
+  --cell-border: rgba(240,246,252,0.10); --focus: #4493f8;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+}
+header {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; justify-content: space-between;
+  padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; }
+header h1 .logo { display: grid; grid-template-columns: repeat(2, 7px); gap: 2px; }
+header h1 .logo i { width: 7px; height: 7px; border-radius: 2px; display: block; }
+.repo-line { color: var(--muted); font-size: 13px; display: flex; gap: 14px; flex-wrap: wrap; }
+.repo-line b { color: var(--text); font-weight: 600; }
+main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+.banner { border: 1px solid var(--warn-border); background: var(--warn-bg); border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; }
+.banner.info { border-color: var(--info-border); background: var(--info-bg); }
+.banner[hidden] { display: none; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.card h2 .step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 12px; }
+.card p.hint, .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+.grid-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.grid-head h2 { margin: 0; }
+.summary { color: var(--muted); font-size: 13px; }
+.summary b { color: var(--text); }
+.graph-wrap { overflow-x: auto; padding: 8px 0 4px; }
+.graph { display: inline-grid; grid-template-columns: 30px auto; grid-template-rows: 16px auto; user-select: none; -webkit-user-select: none; }
+.months { grid-column: 2; position: relative; height: 16px; font-size: 11px; color: var(--muted); }
+.months span { position: absolute; top: 0; white-space: nowrap; }
+.days { grid-row: 2; display: grid; grid-template-rows: repeat(7, var(--cell)); gap: var(--gap); font-size: 11px; color: var(--muted); }
+.days span { line-height: var(--cell); }
+.cells { grid-row: 2; grid-column: 2; display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--cell)); grid-auto-columns: var(--cell); gap: var(--gap); touch-action: none; }
+:root, .graph { --cell: 14px; --gap: 3px; }
+.graph.small { --cell: 11px; --gap: 2px; }
+.cell { width: var(--cell); height: var(--cell); border-radius: 2px; background: var(--l0); outline: 1px solid var(--cell-border); outline-offset: -1px; }
+.cell[data-l="1"] { background: var(--l1); } .cell[data-l="2"] { background: var(--l2); }
+.cell[data-l="3"] { background: var(--l3); } .cell[data-l="4"] { background: var(--l4); }
+.cell.off { background: var(--off); outline-color: transparent; }
+.editable .cell:not(.off) { cursor: crosshair; }
+.editable .cell:not(.off):hover { outline: 2px solid var(--focus); outline-offset: -1px; }
+.cell.manual { box-shadow: inset 0 0 0 1px rgba(127,127,127,0.35); }
+.legend { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.legend .cell { display: inline-block; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
+.cols > .card { margin-bottom: 0; }
+label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+label.block { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+input[type="number"], input[type="text"], input[type="email"], select, textarea {
+  font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; min-width: 0;
+}
+input[type="number"] { width: 76px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+button {
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+}
+button:hover { border-color: var(--muted); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--danger); }
+button.icon { padding: 3px 9px; }
+.swatches { display: flex; gap: 6px; }
+.swatch { outline: 1px solid var(--cell-border); outline-offset: -1px; width: 30px; height: 30px; border-radius: 6px; border: 2px solid transparent; padding: 0; display: grid; place-items: center; font-size: 11px; font-weight: 600; color: var(--muted); }
+.swatch[data-l="0"] { background: var(--l0); } .swatch[data-l="1"] { background: var(--l1); }
+.swatch[data-l="2"] { background: var(--l2); color: #fff; } .swatch[data-l="3"] { background: var(--l3); color: #fff; }
+.swatch[data-l="4"] { background: var(--l4); color: #fff; }
+.swatch.active { border-color: var(--focus); box-shadow: 0 0 0 2px var(--panel) inset; }
+.level-table { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 10px; text-align: center; font-size: 12px; color: var(--muted); }
+.level-table .cell { margin: 0 auto 2px; width: 16px; height: 16px; }
+.level-table b { color: var(--text); font-size: 14px; display: block; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.xy { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+.nudge { display: inline-grid; grid-template-columns: repeat(4, auto); gap: 4px; }
+.drop { border: 1.5px dashed var(--border); border-radius: 8px; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+.drop.over { border-color: var(--focus); background: var(--info-bg); }
+.drop img { max-width: 100%; max-height: 80px; display: block; margin: 6px auto 0; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 12px 12px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 13px; max-width: min(640px, calc(100vw - 32px)); white-space: pre-wrap; box-shadow: 0 8px 24px rgba(0,0,0,0.25); z-index: 10; }
+.toast.error { background: var(--danger); color: #fff; }
+.toast[hidden] { display: none; }
+pre.log { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 12px; max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 8px 0 0; }
+pre.log:empty { display: none; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.tip { position: fixed; pointer-events: none; background: #24292f; color: #fff; font-size: 12px; padding: 4px 8px; border-radius: 6px; z-index: 20; white-space: nowrap; }
+.tip[hidden] { display: none; }
+.stats { font-size: 13px; color: var(--muted); }
+.stats b { color: var(--text); }
+@media (max-width: 600px) {
+  header { padding: 12px 16px; }
+  main { padding: 16px 16px 48px; }
+  .cols { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="logo"><i style="background:var(--l2)"></i><i style="background:var(--l4)"></i><i style="background:var(--l1)"></i><i style="background:var(--l3)"></i></span>GitHub Activity Painter</h1>
+  <div class="repo-line" id="repoLine"><span>Connecting to <code>paint.py</code>…</span></div>
+</header>
+
+<main>
+  <div class="banner" id="offline" hidden>
+    <b>Not connected to the local server.</b> Start the tool with <code>python3 paint.py</code> from your clone and open the URL it prints.
+    You can still design and export a JSON file here, then run <code>python3 paint.py apply design.json</code>.
+  </div>
+  <div class="banner" id="branchWarn" hidden></div>
+
+  <!-- ===================== DESIGN ===================== -->
+  <section class="card" id="designCard">
+    <div class="grid-head">
+      <h2><span class="step">1</span> Design <span class="summary" id="windowLabel"></span></h2>
+      <div class="summary" id="designSummary"></div>
+    </div>
+    <div class="graph-wrap">
+      <div class="graph editable" id="designGraph"></div>
+    </div>
+    <div class="row" style="justify-content: space-between; margin-top: 6px;">
+      <div class="row">
+        <span class="hint" style="margin:0">Brush:</span>
+        <div class="swatches" id="brushes"></div>
+        <button class="icon" id="undoBtn" title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="fillBtn" title="Paint every day of the year with the brush level">Fill all</button>
+        <button id="clearDrawBtn" class="danger">Clear drawing</button>
+        <button id="clearAllBtn" class="danger">Clear everything</button>
+      </div>
+      <div class="legend">Less <span class="cell" data-l="0"></span><span class="cell" data-l="1"></span><span class="cell" data-l="2"></span><span class="cell" data-l="3"></span><span class="cell" data-l="4"></span> More</div>
+    </div>
+    <p class="hint">Click or drag to paint with the selected brush. Right-click (or Shift+drag) paints level 0 (erase). Hand-painted cells sit on top of the text and picture layers.
+      Rows are the days of the week (Sun → Sat), columns are weeks — the graph covers the last 12 months up to today.</p>
+  </section>
+
+  <div class="cols">
+    <!-- ===================== CONTRAST ===================== -->
+    <section class="card">
+      <h2><span class="step">2</span> Contrast (commits per day)</h2>
+      <div class="xy">
+        <label class="block">Lightest · level 0 <input type="number" id="minCommits" min="0" max="10000" value="0"></label>
+        <label class="block">Darkest · level 4 <input type="number" id="maxCommits" min="1" max="10000" value="10"></label>
+      </div>
+      <div class="level-table" id="levelTable"></div>
+      <p class="hint">GitHub picks the colour of a day relative to <i>your</i> other days. If you usually make 30 commits on busy days, use a larger maximum so the painting stands out.
+        Level 0 is usually 0 commits (empty background).</p>
+      <details style="margin-top:10px">
+        <summary class="hint" style="cursor:pointer">Check my current GitHub activity</summary>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="ghUser" placeholder="GitHub username" style="width: 170px">
+          <button id="ghBtn">Load profile graph</button>
+        </div>
+        <div class="stats" id="ghStats" style="margin-top:8px"></div>
+        <div class="graph-wrap"><div class="graph small" id="ghGraph"></div></div>
+      </details>
+    </section>
+
+    <!-- ===================== TEXT ===================== -->
+    <section class="card">
+      <h2><span class="step">3</span> Text layer</h2>
+      <div class="stack">
+        <label class="block">Text <input type="text" id="textValue" placeholder="HELLO 2026" maxlength="60"></label>
+        <div class="xy">
+          <label class="block">Font
+            <select id="textFont">
+              <option value="caps">Pixel 3×5 (CAPITALS)</option>
+              <option value="lower">Pixel 7 (lowercase)</option>
+              <option value="system">Any font (rasterised)</option>
+            </select>
+          </label>
+          <label class="block">Level <select id="textLevel"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label>
+          <label class="block" id="sysFontWrap" hidden>Font family <input type="text" id="sysFont" value="Arial Black, sans-serif" style="width:150px"></label>
+        </div>
+        <div class="xy">
+          <label class="block">Column (x) <input type="number" id="textX" value="1"></label>
+          <label class="block">Row (y) <input type="number" id="textY" value="1"></label>
+          <div class="nudge" data-layer="text">
+            <button class="icon" data-dx="-1" title="Move left">←</button><button class="icon" data-dx="1" title="Move right">→</button>
+            <button class="icon" data-dy="-1" title="Move up">↑</button><button class="icon" data-dy="1" title="Move down">↓</button>
+          </div>
+          <button id="centerText" title="Center horizontally">Center</button>
+        </div>
+        <div class="row"><button id="clearTextBtn" class="danger">Clear text</button><span class="hint" id="textInfo" style="margin:0"></span></div>
+      </div>
+    </section>
+
+    <!-- ===================== IMAGE ===================== -->
+    <section class="card">
+      <h2><span class="step">4</span> Picture layer</h2>
+      <div class="stack">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Import a picture">
+          <span id="dropLabel">Drop a logo / picture here, paste it, or <u>click to browse</u></span>
+          <img id="imgPreview" alt="" hidden>
+          <input type="file" id="imgFile" accept="image/*" hidden>
+        </div>
+        <div class="xy">
+          <label class="block">Height (rows) <input type="number" id="imgRows" min="1" max="7" value="7"></label>
+          <label class="block">Width (cols, 0 = auto) <input type="number" id="imgCols" min="0" max="60" value="0"></label>
+          <label class="block">Shades
+            <select id="imgMode"><option value="levels">5 levels</option><option value="mono">1 colour</option></select>
+          </label>
+          <label class="block" id="imgLevelWrap" hidden>Level <select id="imgLevel"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label>
+        </div>
+        <div class="xy">
+          <label class="block">Threshold <input type="range" id="imgThreshold" min="0" max="0.9" step="0.05" value="0.15"></label>
+          <label><input type="checkbox" id="imgInvert"> Invert (light logo on dark)</label>
+          <label><input type="checkbox" id="imgCrop" checked> Auto-crop</label>
+        </div>
+        <div class="xy">
+          <label class="block">Column (x) <input type="number" id="imgX" value="1"></label>
+          <label class="block">Row (y) <input type="number" id="imgY" value="0"></label>
+          <div class="nudge" data-layer="image">
+            <button class="icon" data-dx="-1" title="Move left">←</button><button class="icon" data-dx="1" title="Move right">→</button>
+            <button class="icon" data-dy="-1" title="Move up">↑</button><button class="icon" data-dy="1" title="Move down">↓</button>
+          </div>
+          <button id="centerImg" title="Center horizontally">Center</button>
+        </div>
+        <div class="row"><button id="clearImgBtn" class="danger">Clear picture</button><span class="hint" id="imgInfo" style="margin:0"></span></div>
+      </div>
+    </section>
+
+    <!-- ===================== COMMITS ===================== -->
+    <section class="card">
+      <h2><span class="step">5</span> Commits</h2>
+      <div class="stack">
+        <div class="xy">
+          <label class="block" style="flex:1">Author name <input type="text" id="authorName" autocomplete="name"></label>
+          <label class="block" style="flex:1.4">Author email <input type="email" id="authorEmail" autocomplete="email"></label>
+        </div>
+        <p class="hint" style="margin-top:-4px">Must be an email verified on your GitHub account (e.g. <code>ID+login@users.noreply.github.com</code>), otherwise the commits will not count.</p>
+        <div class="row">
+          <button class="primary" id="paintBtn">Create commits</button>
+          <button class="danger" id="deleteBtn">Delete painted commits</button>
+          <button id="pushBtn">Push to GitHub</button>
+        </div>
+        <p class="hint" style="margin:0">“Create commits” replaces any previous painting. Deleting rewrites history, so pushes use <code>--force-with-lease</code>.</p>
+        <div class="row">
+          <button id="exportBtn">Export design (.json)</button>
+          <button id="importBtn">Import design</button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden>
+        </div>
+        <pre class="log" id="log"></pre>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================== REPOSITORY ===================== -->
+  <section class="card" style="margin-top:16px" id="repoCard">
+    <div class="grid-head">
+      <h2><span class="step">6</span> Current commits in this repository</h2>
+      <div class="row">
+        <span class="summary" id="repoSummary"></span>
+        <button id="refreshBtn">Refresh</button>
+        <button id="loadRepoBtn" title="Copy the painted commits of the repository into the editor">Edit in designer</button>
+      </div>
+    </div>
+    <div class="graph-wrap"><div class="graph" id="repoGraph"></div></div>
+    <p class="hint">What the branch contains right now (painted + regular commits), using the contrast above. Pushed to your default branch, this is what your profile will show (on top of your other contributions).</p>
+  </section>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+// ======================================================================== //
+// Pixel fonts. '#' = filled. Glyph rows are top to bottom.
+// ======================================================================== //
+const CAPS = {
+  A: [".#.","#.#","###","#.#","#.#"], B: ["##.","#.#","##.","#.#","##."], C: [".##","#..","#..","#..",".##"],
+  D: ["##.","#.#","#.#","#.#","##."], E: ["###","#..","##.","#..","###"], F: ["###","#..","##.","#..","#.."],
+  G: [".##","#..","#.#","#.#",".##"], H: ["#.#","#.#","###","#.#","#.#"], I: ["###",".#.",".#.",".#.","###"],
+  J: ["..#","..#","..#","#.#",".#."], K: ["#.#","#.#","##.","#.#","#.#"], L: ["#..","#..","#..","#..","###"],
+  M: ["#...#","##.##","#.#.#","#...#","#...#"], N: ["#..#","##.#","#.##","#..#","#..#"], O: [".#.","#.#","#.#","#.#",".#."],
+  P: ["##.","#.#","##.","#..","#.."], Q: [".#.","#.#","#.#","##.",".##"], R: ["##.","#.#","##.","#.#","#.#"],
+  S: [".##","#..",".#.","..#","##."], T: ["###",".#.",".#.",".#.",".#."], U: ["#.#","#.#","#.#","#.#","###"],
+  V: ["#.#","#.#","#.#","#.#",".#."], W: ["#...#","#...#","#.#.#","##.##","#...#"], X: ["#.#","#.#",".#.","#.#","#.#"],
+  Y: ["#.#","#.#",".#.",".#.",".#."], Z: ["###","..#",".#.","#..","###"],
+  "0": ["###","#.#","#.#","#.#","###"], "1": [".#.","##.",".#.",".#.","###"], "2": ["##.","..#",".#.","#..","###"],
+  "3": ["##.","..#",".#.","..#","##."], "4": ["#.#","#.#","###","..#","..#"], "5": ["###","#..","##.","..#","##."],
+  "6": [".##","#..","###","#.#","###"], "7": ["###","..#",".#.",".#.",".#."], "8": ["###","#.#","###","#.#","###"],
+  "9": ["###","#.#","###","..#","##."],
+  ".": [".",".",".",".","#"], ",": ["..","..","..",".#","#."], "!": ["#","#","#",".","#"], "?": ["##.","..#",".#.","...",".#."],
+  "-": ["...","...","###","...","..."], "+": ["...",".#.","###",".#.","..."], ":": [".","#",".","#","."],
+  "'": ["#","#",".",".","."], '"': ["#.#","#.#","...","...","..."], "/": ["..#","..#",".#.","#..","#.."],
+  "#": ["#.#","###","#.#","###","#.#"], "=": ["...","###","...","###","..."], "_": ["...","...","...","...","###"],
+  "<": ["..#",".#.","#..",".#.","..#"], ">": ["#..",".#.","..#",".#.","#.."], "(": [".#","#.","#.","#.",".#"],
+  ")": ["#.",".#",".#",".#","#."], "[": ["##","#.","#.","#.","##"], "]": ["##",".#",".#",".#","##"],
+  "*": ["...","#.#",".#.","#.#","..."], "•": ["...",".#.","###",".#.","..."], "·": [".",".","#",".","."],
+  "♥": [".#.#.","#####","#####",".###.","..#.."], "@": [".##.","#..#","#.##","#...",".###"],
+  "&": [".#..","#.#.",".#..","#.#.",".#.#"], "%": ["#.#","..#",".#.","#..","#.#"], "$": [".##","##.",".#.",".##","##."],
+  "|": ["#","#","#","#","#"], " ": ["..","..","..","..",".."],
+};
+// 7-row font: x-height rows 1-5, ascenders on row 0, descenders on row 6.
+const LOWER = {
+  a: ["...","##.","..#",".##","#.#",".##","..."], b: ["#..","#..","##.","#.#","#.#","##.","..."],
+  c: ["...",".##","#..","#..","#..",".##","..."], d: ["..#","..#",".##","#.#","#.#",".##","..."],
+  e: ["...",".#.","#.#","###","#..",".##","..."], f: ["..#",".#.","###",".#.",".#.",".#.","..."],
+  g: ["...",".##","#.#","#.#",".##","..#","##."], h: ["#..","#..","##.","#.#","#.#","#.#","..."],
+  i: ["#",".","#","#","#","#","."], j: [".#","..",".#",".#",".#",".#","#."],
+  k: ["#..","#..","#.#","##.","##.","#.#","..."], l: ["#.","#.","#.","#.","#.",".#",".."],
+  m: [".....","####.","#.#.#","#.#.#","#.#.#","#.#.#","....."], n: ["...","##.","#.#","#.#","#.#","#.#","..."],
+  o: ["...",".#.","#.#","#.#","#.#",".#.","..."], p: ["...","##.","#.#","#.#","##.","#..","#.."],
+  q: ["...",".##","#.#","#.#",".##","..#","..#"], r: ["...","#.#","##.","#..","#..","#..","..."],
+  s: ["...",".##","#..",".#.","..#","##.","..."], t: [".#.","###",".#.",".#.",".#.",".##","..."],
+  u: ["...","#.#","#.#","#.#","#.#",".##","..."], v: ["...","#.#","#.#","#.#","#.#",".#.","..."],
+  w: [".....","#...#","#...#","#.#.#","#.#.#",".#.#.","....."], x: ["...","#.#","#.#",".#.","#.#","#.#","..."],
+  y: ["...","#.#","#.#","#.#",".##","..#","##."], z: ["...","###","..#",".#.","#..","###","..."],
+  ".": [".",".",".",".",".","#","."], ",": ["..","..","..","..","..",".#","#."],
+  "[": ["##","#.","#.","#.","#.","#.","##"], "]": ["##",".#",".#",".#",".#",".#","##"],
+  "(": [".#","#.","#.","#.","#.","#.",".#"], ")": ["#.",".#",".#",".#",".#",".#","#."],
+  "•": ["...","...",".#.","###",".#.","...","..."], "|": ["#","#","#","#","#","#","#"],
+};
+
+function glyphFor(ch, font) {
+  if (font === "lower") {
+    if (LOWER[ch]) return LOWER[ch];
+    const g = CAPS[ch] || CAPS[ch.toUpperCase()];
+    return g ? [".".repeat(g[0].length), ...g, ".".repeat(g[0].length)] : null;
+  }
+  return CAPS[ch] || CAPS[ch.toUpperCase()] || null;
+}
+
+/** Render text with a pixel font -> {w, h, data: Uint8Array of 0/1}. */
+function renderPixelText(text, font) {
+  const glyphs = [...text].map(ch => glyphFor(ch, font)).filter(Boolean);
+  const h = font === "lower" ? 7 : 5;
+  if (!glyphs.length) return { w: 0, h, data: new Uint8Array(0) };
+  const w = glyphs.reduce((s, g) => s + g[0].length, 0) + glyphs.length - 1;
+  const data = new Uint8Array(w * h);
+  let x0 = 0;
+  for (const g of glyphs) {
+    g.forEach((row, y) => [...row].forEach((c, x) => { if (c === "#") data[y * w + x0 + x] = 1; }));
+    x0 += g[0].length + 1;
+  }
+  return { w, h, data };
+}
+
+// ======================================================================== //
+// Dates & grid geometry (same layout as the GitHub contribution graph)
+// ======================================================================== //
+const DAY = 86400000;
+function iso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function parseIso(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+
+function buildWindow(today) {
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let start = new Date(end.getFullYear() - 1, end.getMonth(), end.getDate());
+  if (start.getMonth() !== end.getMonth()) start = new Date(end.getFullYear() - 1, end.getMonth() + 1, 0); // Feb 29
+  const first = addDays(start, -start.getDay());               // Sunday on/before start
+  const cols = Math.ceil((Math.round((end - first) / DAY) + 1) / 7);
+  const cells = [];                                              // index = col * 7 + row
+  for (let c = 0; c < cols; c++) for (let r = 0; r < 7; r++) {
+    const d = addDays(first, c * 7 + r);
+    cells.push({ c, r, date: iso(d), d, valid: d >= start && d <= end });
+  }
+  return { start: iso(start), end: iso(end), cols, cells };
+}
+
+// ======================================================================== //
+// State
+// ======================================================================== //
+const STORAGE_KEY = "github-activity-painter:v1";
+const state = {
+  min: 0, max: 10, brush: 4,
+  manual: {},                                   // date -> level, painted by hand
+  text: { value: "", font: "caps", level: 4, x: 1, y: 1, sysFont: "Arial Black, sans-serif" },
+  image: { src: null, name: "", rows: 7, cols: 0, mode: "levels", level: 4, threshold: 0.15, invert: false, crop: true, x: 1, y: 0 },
+  author: { name: "", email: "" },
+};
+let win = buildWindow(new Date());
+let server = null;           // last /api/status
+let imageEl = null;          // HTMLImageElement of the picture layer
+let imageBits = null;        // {w,h,data: levels}
+let textBits = null;         // {w,h,data: levels}
+let undoStack = [];
+
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* storage full or blocked */ }
+}
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    if (s) {
+      Object.assign(state, { ...s, text: { ...state.text, ...s.text }, image: { ...state.image, ...s.image }, author: { ...state.author, ...s.author } });
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// ======================================================================== //
+// Contrast
+// ======================================================================== //
+function levelCounts() {
+  const lo = Math.max(0, state.min | 0), hi = Math.max(lo, state.max | 0);
+  return [lo, ...[1, 2, 3, 4].map(l => Math.max(1, Math.floor(lo + (hi - lo) * l / 4 + 0.5)))];
+}
+/** Level that best represents `n` commits on a day, given the contrast. */
+function levelOf(n) {
+  if (!n) return 0;
+  const lc = levelCounts();
+  let best = 1;
+  for (let l = 2; l <= 4; l++) if (Math.abs(lc[l] - n) <= Math.abs(lc[best] - n)) best = l;
+  return best;
+}
+
+// ======================================================================== //
+// Layers
+// ======================================================================== //
+/** Turn a canvas into ink (0..1) per pixel. Dark = ink unless inverted. Transparent = no ink. */
+function inkOf(ctx, w, h, invert) {
+  const px = ctx.getImageData(0, 0, w, h).data;
+  const ink = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const a = px[i * 4 + 3] / 255;
+    const lum = (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) / 255;
+    ink[i] = a * (invert ? lum : 1 - lum);
+  }
+  return ink;
+}
+
+/** Downsample any drawable to rows x cols levels (area average, optional auto-crop). */
+function rasterize(source, sw, sh, opts) {
+  const scale = Math.min(1, 600 / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, w, h);
+  const ink = inkOf(ctx, w, h, opts.invert);
+  let x0 = 0, y0 = 0, x1 = w, y1 = h;
+  if (opts.crop) {
+    x0 = w; y0 = h; x1 = 0; y1 = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (ink[y * w + x] > 0.08) {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1);
+    }
+    if (x1 <= x0) return { w: 0, h: 0, data: new Uint8Array(0) };
+  }
+  const rows = Math.max(1, Math.min(7, opts.rows | 0));
+  const cols = opts.cols > 0 ? opts.cols | 0 : Math.max(1, Math.round((x1 - x0) / (y1 - y0) * rows));
+  const out = new Uint8Array(rows * cols);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const ya = y0 + (y1 - y0) * r / rows, yb = y0 + (y1 - y0) * (r + 1) / rows;
+    const xa = x0 + (x1 - x0) * c / cols, xb = x0 + (x1 - x0) * (c + 1) / cols;
+    let sum = 0, area = 0;
+    for (let y = Math.floor(ya); y < Math.ceil(yb); y++) {
+      const wy = Math.min(yb, y + 1) - Math.max(ya, y);
+      for (let x = Math.floor(xa); x < Math.ceil(xb); x++) {
+        const wx = Math.min(xb, x + 1) - Math.max(xa, x);
+        sum += ink[y * w + x] * wx * wy; area += wx * wy;
+      }
+    }
+    const v = area ? sum / area : 0;
+    let level = 0;
+    if (v > opts.threshold) level = opts.mode === "mono" ? opts.level : Math.min(4, Math.max(1, Math.round(v * 4)));
+    out[r * cols + c] = level;
+  }
+  return { w: cols, h: rows, data: out };
+}
+
+function computeText() {
+  const t = state.text;
+  if (!t.value) { textBits = null; return; }
+  if (t.font === "system") {
+    const size = 120;
+    const cv = document.createElement("canvas");
+    const ctx = cv.getContext("2d");
+    ctx.font = `${size}px ${t.sysFont}`;
+    const wpx = Math.ceil(ctx.measureText(t.value).width) + 20;
+    cv.width = wpx; cv.height = Math.round(size * 1.4);
+    ctx.font = `${size}px ${t.sysFont}`;
+    ctx.fillStyle = "#000"; ctx.textBaseline = "middle";
+    ctx.fillText(t.value, 10, cv.height / 2);
+    textBits = rasterize(cv, cv.width, cv.height, { rows: 7, cols: 0, invert: false, crop: true, threshold: 0.3, mode: "mono", level: t.level });
+  } else {
+    const bits = renderPixelText(t.value, t.font);
+    textBits = { w: bits.w, h: bits.h, data: bits.data.map(v => v ? t.level : 0) };
+  }
+}
+
+function computeImage() {
+  const im = state.image;
+  if (!imageEl || !im.src) { imageBits = null; return; }
+  imageBits = rasterize(imageEl, imageEl.naturalWidth, imageEl.naturalHeight, im);
+}
+
+/** Level of every grid cell: hand-painted cells win, otherwise the brightest layer. */
+function composite() {
+  const levels = new Array(win.cells.length).fill(0);
+  const manualFlag = new Array(win.cells.length).fill(false);
+  const stamp = (bits, ox, oy) => {
+    if (!bits) return;
+    for (let y = 0; y < bits.h; y++) for (let x = 0; x < bits.w; x++) {
+      const v = bits.data[y * bits.w + x], c = ox + x, r = oy + y;
+      if (!v || c < 0 || c >= win.cols || r < 0 || r > 6) continue;
+      const i = c * 7 + r;
+      if (v > levels[i]) levels[i] = v;
+    }
+  };
+  stamp(imageBits, state.image.x, state.image.y);
+  stamp(textBits, state.text.x, state.text.y);
+  win.cells.forEach((cell, i) => {
+    if (!cell.valid) { levels[i] = 0; return; }
+    if (cell.date in state.manual) { levels[i] = state.manual[cell.date]; manualFlag[i] = true; }
+  });
+  return { levels, manualFlag };
+}
+
+/** Commits to create, by date. */
+function designCounts() {
+  const lc = levelCounts();
+  const { levels } = composite();
+  const counts = {};
+  win.cells.forEach((cell, i) => { if (cell.valid && lc[levels[i]]) counts[cell.date] = lc[levels[i]]; });
+  return counts;
+}
+
+// ======================================================================== //
+// Rendering
+// ======================================================================== //
+const $ = id => document.getElementById(id);
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function buildGraph(el) {
+  el.innerHTML = "";
+  const months = document.createElement("div"); months.className = "months";
+  const days = document.createElement("div"); days.className = "days";
+  ["", "Mon", "", "Wed", "", "Fri", ""].forEach(t => { const s = document.createElement("span"); s.textContent = t; days.appendChild(s); });
+  const cells = document.createElement("div"); cells.className = "cells";
+  let lastMonth = -1, lastLabel = -9;
+  const step = el.classList.contains("small") ? 13 : 17;
+  for (let c = 0; c < win.cols; c++) {
+    const col = win.cells.slice(c * 7, c * 7 + 7).filter(x => x.valid);
+    if (!col.length) continue;
+    const m = col[col.length - 1].d.getMonth();
+    if (m === lastMonth) continue;
+    lastMonth = m;
+    if (c - lastLabel < 3 || c > win.cols - 2) continue;
+    const s = document.createElement("span"); s.textContent = MONTHS[m]; s.style.left = (c * step) + "px"; months.appendChild(s);
+    lastLabel = c;
+  }
+  win.cells.forEach((cell, i) => {
+    const div = document.createElement("div");
+    div.className = "cell" + (cell.valid ? "" : " off");
+    div.dataset.i = i; div.dataset.date = cell.date;
+    cells.appendChild(div);
+  });
+  el.append(document.createElement("div"), months, days, cells);
+  return cells;
+}
+
+let designCells, repoCells;
+function renderDesign() {
+  const { levels, manualFlag } = composite();
+  const lc = levelCounts();
+  let commits = 0, days = 0;
+  [...designCells.children].forEach((div, i) => {
+    div.dataset.l = levels[i];
+    div.classList.toggle("manual", manualFlag[i] && win.cells[i].valid);
+    if (win.cells[i].valid && lc[levels[i]]) { commits += lc[levels[i]]; days++; }
+  });
+  $("designSummary").innerHTML = `<b>${commits.toLocaleString()}</b> commits on <b>${days}</b> days`;
+  $("levelTable").innerHTML = lc.map((n, l) => `<div><span class="cell" data-l="${l}"></span><b>${n}</b>level ${l}</div>`).join("");
+  $("textInfo").textContent = textBits && textBits.w ? `${textBits.w} × ${textBits.h} cells` : "";
+  $("imgInfo").textContent = imageBits && imageBits.w ? `${imageBits.w} × ${imageBits.h} cells` : (state.image.src ? "nothing above threshold" : "");
+  save();
+}
+
+function renderRepo() {
+  if (!server) { $("repoSummary").textContent = "not connected"; return; }
+  [...repoCells.children].forEach((div, i) => {
+    const cell = win.cells[i];
+    const n = (server.painted[cell.date] || 0) + (server.other[cell.date] || 0);
+    div.dataset.l = cell.valid ? levelOf(n) : 0;
+  });
+  $("repoSummary").innerHTML = `<b>${server.painted_total.toLocaleString()}</b> painted + <b>${server.other_total.toLocaleString()}</b> other commits`;
+}
+
+function renderStatus() {
+  const s = server;
+  if (!s) return;
+  const remote = s.remote ? s.remote.replace(/^https?:\/\/[^@/]*@/, "https://") : "no remote";
+  $("repoLine").innerHTML = "";
+  [["Repository", remote], ["Branch", s.branch || "(detached)"], ["Painted", `${s.painted_total.toLocaleString()} commits`]].forEach(([k, v]) => {
+    const span = document.createElement("span"); span.append(k + ": ");
+    const b = document.createElement("b"); b.textContent = v; span.appendChild(b); $("repoLine").appendChild(span);
+  });
+  const warn = $("branchWarn");
+  if (s.detached) { warn.hidden = false; warn.textContent = "HEAD is detached: check out your default branch (e.g. git switch main) before painting."; }
+  else if (s.default_branch && s.branch !== s.default_branch) {
+    warn.hidden = false;
+    warn.textContent = `You are on “${s.branch}” but the default branch is “${s.default_branch}”. GitHub only counts commits on the default branch.`;
+  } else warn.hidden = true;
+  if (!state.author.name && s.identity.name) $("authorName").value = state.author.name = s.identity.name;
+  if (!state.author.email && s.identity.email) $("authorEmail").value = state.author.email = s.identity.email;
+  if (s.today && s.today !== win.end && s.today === iso(new Date())) { /* same day, nothing to do */ }
+  renderRepo();
+}
+
+function renderAll() { computeText(); computeImage(); renderDesign(); renderRepo(); }
+
+// ======================================================================== //
+// Server API
+// ======================================================================== //
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+async function refresh() {
+  try {
+    server = await api("/api/status");
+    $("offline").hidden = true;
+    renderStatus();
+  } catch (e) {
+    server = null;
+    $("offline").hidden = false;
+    $("repoLine").innerHTML = "<span>Offline — design only</span>";
+    renderRepo();
+  }
+  ["paintBtn", "deleteBtn", "pushBtn", "refreshBtn", "loadRepoBtn"].forEach(id => $(id).disabled = !server);
+}
+
+let toastTimer;
+function toast(msg, error) {
+  const t = $("toast"); t.textContent = msg; t.className = "toast" + (error ? " error" : ""); t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, error ? 7000 : 4000);
+}
+function log(msg) { $("log").textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + $("log").textContent; }
+
+async function busy(btn, fn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = "Working…";
+  try { await fn(); } catch (e) { toast(e.message, true); log("Error: " + e.message); }
+  finally { btn.textContent = label; btn.disabled = !server; }
+}
+
+// ======================================================================== //
+// Painting interactions
+// ======================================================================== //
+let painting = null;   // level being painted during a drag
+function pushUndo() { undoStack.push(JSON.stringify(state.manual)); if (undoStack.length > 100) undoStack.shift(); }
+function paintCell(target) {
+  const i = target && target.dataset.i;
+  if (i === undefined || painting === null) return;
+  const cell = win.cells[+i];
+  if (!cell.valid || state.manual[cell.date] === painting) return;
+  state.manual[cell.date] = painting;
+  renderDesign();
+}
+function setupDesignEvents() {
+  designCells.addEventListener("contextmenu", e => e.preventDefault());
+  designCells.addEventListener("pointerdown", e => {
+    if (!e.target.dataset.i) return;
+    e.preventDefault();
+    pushUndo();
+    painting = (e.button === 2 || e.shiftKey) ? 0 : state.brush;
+    paintCell(e.target);
+  });
+  designCells.addEventListener("pointermove", e => {
+    if (painting === null) return;
+    paintCell(document.elementFromPoint(e.clientX, e.clientY));
+  });
+  window.addEventListener("pointerup", () => painting = null);
+}
+
+function setupTooltips() {
+  const tip = $("tip");
+  document.addEventListener("pointerover", e => {
+    const el = e.target;
+    if (!el.classList || !el.classList.contains("cell") || !el.dataset.date || el.classList.contains("off")) { tip.hidden = true; return; }
+    const graph = el.closest(".graph");
+    const date = parseIso(el.dataset.date).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+    let text;
+    if (graph.id === "designGraph") {
+      const n = levelCounts()[+el.dataset.l || 0];
+      text = `${n} commit${n === 1 ? "" : "s"} on ${date} · level ${el.dataset.l || 0}`;
+    } else if (graph.id === "repoGraph" && server) {
+      const p = server.painted[el.dataset.date] || 0, o = server.other[el.dataset.date] || 0;
+      text = `${p} painted + ${o} other on ${date}`;
+    } else if (graph.id === "ghGraph" && ghCounts) {
+      const n = ghCounts[el.dataset.date] || 0;
+      text = `${n} contribution${n === 1 ? "" : "s"} on ${date}`;
+    } else return;
+    tip.textContent = text; tip.hidden = false;
+    const r = el.getBoundingClientRect();
+    tip.style.left = Math.max(4, Math.min(window.innerWidth - tip.offsetWidth - 4, r.left + r.width / 2 - tip.offsetWidth / 2)) + "px";
+    tip.style.top = (r.top - tip.offsetHeight - 6) + "px";
+  });
+  document.addEventListener("scroll", () => tip.hidden = true, true);
+}
+
+// ======================================================================== //
+// Image loading
+// ======================================================================== //
+function loadImage(src, name) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Could not read this picture"));
+    img.src = src;
+  }).then(img => {
+    imageEl = img;
+    state.image.src = src; state.image.name = name || state.image.name;
+    $("imgPreview").src = src; $("imgPreview").hidden = false;
+    $("dropLabel").textContent = (state.image.name || "picture") + " — click to replace";
+    computeImage(); renderDesign();
+  });
+}
+function readFile(file) {
+  if (!file || !file.type.startsWith("image/")) { toast("Please choose an image file", true); return; }
+  const reader = new FileReader();
+  reader.onload = () => loadImage(reader.result, file.name).catch(e => toast(e.message, true));
+  reader.readAsDataURL(file);
+}
+function clearImage() {
+  imageEl = null; imageBits = null;
+  state.image.src = null; state.image.name = "";
+  $("imgPreview").hidden = true; $("imgPreview").removeAttribute("src");
+  $("dropLabel").innerHTML = "Drop a logo / picture here, paste it, or <u>click to browse</u>";
+  $("imgFile").value = "";
+  renderDesign();
+}
+
+// ======================================================================== //
+// GitHub profile
+// ======================================================================== //
+let ghCounts = null;
+async function loadGitHub() {
+  const user = $("ghUser").value.trim();
+  if (!user) return toast("Enter a GitHub username", true);
+  const data = await api("/api/github?user=" + encodeURIComponent(user));
+  ghCounts = data.counts;
+  const values = Object.values(ghCounts);
+  const active = values.filter(v => v > 0).sort((a, b) => a - b);
+  const max = active.length ? active[active.length - 1] : 0;
+  const total = values.reduce((a, b) => a + b, 0);
+  const p90 = active.length ? active[Math.floor(active.length * 0.9)] : 0;
+  const suggestion = Math.max(10, Math.ceil(max * 1.2));
+  $("ghStats").innerHTML = `<b>${total}</b> contributions on <b>${active.length}</b> days · busiest day <b>${max}</b> · 90% of active days ≤ <b>${p90}</b>.<br>
+    Suggested darkest level: <b>${suggestion}</b> commits/day <button class="icon" id="useSuggestion">Use it</button>`;
+  $("useSuggestion").onclick = () => { state.max = suggestion; $("maxCommits").value = suggestion; renderDesign(); renderRepo(); };
+  const cells = buildGraph($("ghGraph"));
+  const sorted = active;
+  const q = f => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * f))] : 0;
+  [...cells.children].forEach((div, i) => {
+    const n = ghCounts[win.cells[i].date] || 0;
+    div.dataset.l = !n ? 0 : n <= q(0.25) ? 1 : n <= q(0.5) ? 2 : n <= q(0.75) ? 3 : 4;
+  });
+}
+
+// ======================================================================== //
+// Import / export
+// ======================================================================== //
+function exportDesign() {
+  const { levels } = composite();
+  const out = { app: "github-activity-painter", version: 1, range: { start: win.start, end: win.end },
+    contrast: { min: state.min, max: state.max }, levels: {}, counts: designCounts() };
+  win.cells.forEach((cell, i) => { if (cell.valid && levels[i]) out.levels[cell.date] = levels[i]; });
+  const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `activity-design-${win.end}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importDesign(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const d = JSON.parse(reader.result);
+      if (!d.levels) throw new Error("not a design file (missing “levels”)");
+      pushUndo();
+      if (d.contrast) { state.min = d.contrast.min | 0; state.max = d.contrast.max | 0; $("minCommits").value = state.min; $("maxCommits").value = state.max; }
+      state.manual = {};
+      let outside = 0;
+      const valid = new Set(win.cells.filter(c => c.valid).map(c => c.date));
+      for (const [date, l] of Object.entries(d.levels)) { if (valid.has(date)) state.manual[date] = +l; else outside++; }
+      state.text.value = ""; $("textValue").value = ""; clearImage();
+      renderAll();
+      toast(`Design imported${outside ? ` (${outside} days outside the current year were skipped)` : ""}`);
+    } catch (e) { toast("Import failed: " + e.message, true); }
+  };
+  reader.readAsText(file);
+}
+
+// ======================================================================== //
+// Wiring
+// ======================================================================== //
+function bindNumber(id, obj, key, after) {
+  const el = $(id);
+  el.value = obj[key];
+  el.addEventListener("input", () => { const v = el.valueAsNumber; if (!Number.isNaN(v)) { obj[key] = v; after(); } });
+}
+function bindValue(id, obj, key, after, cast = v => v) {
+  const el = $(id);
+  if (el.type === "checkbox") el.checked = obj[key]; else el.value = obj[key];
+  el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", () => {
+    obj[key] = el.type === "checkbox" ? el.checked : cast(el.value); after();
+  });
+}
+
+function init() {
+  load();
+  designCells = buildGraph($("designGraph"));
+  repoCells = buildGraph($("repoGraph"));
+  const first = parseIso(win.start), last = parseIso(win.end);
+  const fmt = d => d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  $("windowLabel").textContent = `· ${fmt(first)} → ${fmt(last)} · ${win.cols} weeks × 7 days`;
+
+  // brushes
+  $("brushes").innerHTML = [0, 1, 2, 3, 4].map(l => `<button class="swatch" data-l="${l}" title="Level ${l}">${l}</button>`).join("");
+  const setBrush = l => { state.brush = l; [...$("brushes").children].forEach(b => b.classList.toggle("active", +b.dataset.l === l)); };
+  $("brushes").addEventListener("click", e => { if (e.target.dataset.l) setBrush(+e.target.dataset.l); });
+  setBrush(state.brush);
+  document.addEventListener("keydown", e => {
+    if (e.target.matches("input, textarea, select")) return;
+    if (/^[0-4]$/.test(e.key)) setBrush(+e.key);
+    if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); $("undoBtn").click(); }
+  });
+  $("undoBtn").onclick = () => { if (undoStack.length) { state.manual = JSON.parse(undoStack.pop()); renderDesign(); } };
+  $("fillBtn").onclick = () => { pushUndo(); win.cells.forEach(c => { if (c.valid) state.manual[c.date] = state.brush; }); renderDesign(); };
+  $("clearDrawBtn").onclick = () => { pushUndo(); state.manual = {}; renderDesign(); };
+  $("clearAllBtn").onclick = () => {
+    if (!confirm("Clear the drawing, the text and the picture?")) return;
+    pushUndo(); state.manual = {}; state.text.value = ""; $("textValue").value = ""; computeText(); clearImage();
+  };
+
+  // contrast
+  const contrastChanged = () => { renderDesign(); renderRepo(); };
+  bindNumber("minCommits", state, "min", contrastChanged);
+  bindNumber("maxCommits", state, "max", contrastChanged);
+
+  // text
+  const textChanged = () => { $("sysFontWrap").hidden = state.text.font !== "system"; computeText(); renderDesign(); };
+  bindValue("textValue", state.text, "value", textChanged);
+  bindValue("textFont", state.text, "font", textChanged);
+  bindValue("textLevel", state.text, "level", textChanged, Number);
+  bindValue("sysFont", state.text, "sysFont", textChanged);
+  bindNumber("textX", state.text, "x", textChanged);
+  bindNumber("textY", state.text, "y", textChanged);
+  $("clearTextBtn").onclick = () => { state.text.value = ""; $("textValue").value = ""; textChanged(); };
+  $("centerText").onclick = () => { if (textBits) { state.text.x = Math.floor((win.cols - textBits.w) / 2); $("textX").value = state.text.x; textChanged(); } };
+  $("sysFontWrap").hidden = state.text.font !== "system";
+
+  // picture
+  const imgChanged = () => { $("imgLevelWrap").hidden = state.image.mode !== "mono"; computeImage(); renderDesign(); };
+  bindNumber("imgRows", state.image, "rows", imgChanged);
+  bindNumber("imgCols", state.image, "cols", imgChanged);
+  bindValue("imgMode", state.image, "mode", imgChanged);
+  bindValue("imgLevel", state.image, "level", imgChanged, Number);
+  bindValue("imgThreshold", state.image, "threshold", imgChanged, Number);
+  bindValue("imgInvert", state.image, "invert", imgChanged);
+  bindValue("imgCrop", state.image, "crop", imgChanged);
+  bindNumber("imgX", state.image, "x", imgChanged);
+  bindNumber("imgY", state.image, "y", imgChanged);
+  $("imgLevelWrap").hidden = state.image.mode !== "mono";
+  $("clearImgBtn").onclick = clearImage;
+  $("centerImg").onclick = () => { if (imageBits) { state.image.x = Math.floor((win.cols - imageBits.w) / 2); $("imgX").value = state.image.x; imgChanged(); } };
+  const drop = $("drop");
+  drop.onclick = () => $("imgFile").click();
+  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("imgFile").click(); } };
+  $("imgFile").onchange = e => readFile(e.target.files[0]);
+  ["dragenter", "dragover"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  document.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+  document.addEventListener("paste", e => { const f = [...e.clipboardData.files].find(f => f.type.startsWith("image/")); if (f) readFile(f); });
+
+  // nudge buttons
+  document.querySelectorAll(".nudge").forEach(n => n.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    const layer = n.dataset.layer === "text" ? state.text : state.image;
+    layer.x += +(b.dataset.dx || 0); layer.y += +(b.dataset.dy || 0);
+    const pre = n.dataset.layer === "text" ? "text" : "img";
+    $(pre + "X").value = layer.x; $(pre + "Y").value = layer.y;
+    computeText(); computeImage(); renderDesign();
+  }));
+
+  // author
+  bindValue("authorName", state.author, "name", save);
+  bindValue("authorEmail", state.author, "email", save);
+
+  // commits
+  $("paintBtn").onclick = e => busy(e.target, async () => {
+    const counts = designCounts();
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (!total && !confirm("The design is empty. Delete the painted commits instead?")) return;
+    if (!state.author.email) throw new Error("Fill in the author email first");
+    const prev = server ? server.painted_total : 0;
+    if (!confirm(`Create ${total.toLocaleString()} commits on ${Object.keys(counts).length} days` +
+                 (prev ? `, replacing the ${prev.toLocaleString()} painted commits already on “${server.branch}”` : ` on “${server.branch}”`) + "?")) return;
+    const r = await api("/api/paint", { counts, name: state.author.name, email: state.author.email, replace: true });
+    server = r.status; renderStatus();
+    const msg = `Created ${r.created.toLocaleString()} commits on ${r.days} days` + (r.removed ? ` (removed ${r.removed.toLocaleString()} old ones)` : "") + ". Now push them!";
+    toast(msg); log(msg);
+  });
+  $("deleteBtn").onclick = e => busy(e.target, async () => {
+    if (!server.painted_total) { toast("There are no painted commits on this branch"); return; }
+    if (!confirm(`Delete the ${server.painted_total.toLocaleString()} painted commits from “${server.branch}”? Other commits are kept.`)) return;
+    const r = await api("/api/clear", {});
+    server = r.status; renderStatus();
+    const msg = `Deleted ${r.removed.toLocaleString()} painted commits. Push (force) to update GitHub.`;
+    toast(msg); log(msg);
+  });
+  $("pushBtn").onclick = e => busy(e.target, async () => {
+    if (!confirm(`Run “git push --force-with-lease -u origin ${server.branch}”?`)) return;
+    const r = await api("/api/push", {});
+    server = r.status; renderStatus();
+    toast("Pushed! Your profile can take a few minutes to update."); log(r.output || "Pushed.");
+  });
+  $("refreshBtn").onclick = () => refresh();
+  $("loadRepoBtn").onclick = () => {
+    if (!server || !server.painted_total) { toast("No painted commits to load"); return; }
+    if (!confirm("Replace the design (drawing, text and picture) with the painting currently in the repository?")) return;
+    pushUndo();
+    state.manual = {};
+    win.cells.forEach(c => { if (c.valid) state.manual[c.date] = levelOf(server.painted[c.date] || 0); });
+    state.text.value = ""; $("textValue").value = ""; computeText(); clearImage();
+    toast("Repository painting loaded into the designer");
+  };
+  $("exportBtn").onclick = exportDesign;
+  $("importBtn").onclick = () => $("importFile").click();
+  $("importFile").onchange = e => { if (e.target.files[0]) importDesign(e.target.files[0]); e.target.value = ""; };
+  $("ghBtn").onclick = e => busy(e.target, loadGitHub).then(() => $("ghBtn").disabled = false);
+
+  setupDesignEvents();
+  setupTooltips();
+  computeText();
+  renderDesign();
+  if (state.image.src) loadImage(state.image.src).catch(() => clearImage());
+  refresh();
+}
+init();
+</script>
+</body>
+</html>

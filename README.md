@@ -1,0 +1,217 @@
+# GitHub Activity Painter
+
+**Display a logo, some text or pixel art in your GitHub contribution graph.**
+Get your own copy of this repo, design your picture in a local web page, let the tool create the commits, push — voilà.
+
+![The statur.co logo painted on the contribution graph](docs/screenshots/04-picture-and-text.png)
+
+- 🖼️ **Picture → pixels**: import a logo (PNG, JPG, SVG…), it is cropped, scaled and turned into the 5 GitHub shades.
+- 🔤 **Text**: two built-in pixel fonts (CAPITALS 3×5 and lowercase 7 rows) or any font installed on your computer.
+- 🖌️ **Hand painting**: click / drag with 5 brush levels, erase, undo, fill.
+- 🎚️ **Contrast**: choose how many commits the lightest and the darkest green represent.
+- 🧾 **Repository view**: see what is already committed, edit it, delete it.
+- 🧹 **Reversible**: painted commits are empty and tagged, so they can be deleted at any time without touching your files.
+- 🐍 **No dependency**: Python 3.8+ and git. Nothing to install.
+
+---
+
+## How the graph works (and the size of the grid)
+
+The contribution graph is **7 rows × 53 columns**:
+
+- each **row is a day of the week** (Sunday at the top, Saturday at the bottom) — not a day of the month;
+- each **column is a week**; the graph covers the last 12 months up to today, so it is 53 weeks wide
+  (occasionally 54 when the year wraps around a leap day). The first and last columns are usually incomplete:
+  the cells before “one year ago” and after “today” are not shown.
+
+Each day gets one of **5 levels** (0 = grey, 4 = darkest green). GitHub picks the level of a day *relative to your
+other days*: someone who usually makes 100 commits a day will not see 10 commits the same way as someone who never
+commits. That is why the tool lets you set the **number of commits for the lightest (level 0) and darkest (level 4)
+shades**; levels 1–3 are spread evenly in between. With the default 0 → 10: `0, 3, 5, 8, 10` commits.
+
+> The painting is tied to real dates, so it slowly scrolls to the left as weeks go by and leaves the graph after a year.
+> Just repaint to move it back.
+
+---
+
+## Step by step
+
+### 1. Get your own copy
+
+> ⚠️ **GitHub does not count commits made in a fork** in your contribution graph
+> ([docs](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-github-profile/managing-contribution-graphs-on-your-profile/why-are-my-contributions-not-showing-up-on-my-profile)).
+> Use one of these instead:
+
+- **Recommended — “Use this template”** → *Create a new repository* (public, or private with
+  *“Private contributions”* enabled on your profile). You get a standalone copy without the example painting.
+- **Or duplicate it manually**: create an empty repository on GitHub, then
+  ```bash
+  git clone https://github.com/lkorczowski/github-activity-painting.git
+  cd github-activity-painting
+  git remote set-url origin https://github.com/<you>/<your-new-repo>.git
+  ```
+- A **fork** works only if you then ask GitHub Support to detach it (*“Leave fork network”*).
+
+<!-- SCREENSHOT PLACEHOLDER: docs/screenshots/00-use-this-template.png
+     The GitHub page of the repository with the green “Use this template” button highlighted
+     and the “Create a new repository” form (owner, name, public/private). -->
+![Use this template](docs/screenshots/00-use-this-template.png)
+
+### 2. Download it locally
+
+```bash
+git clone https://github.com/<you>/<your-repo>.git
+cd <your-repo>
+git switch main          # paint on your DEFAULT branch: GitHub only counts commits there
+```
+
+### 3. Start the interface
+
+```bash
+python3 paint.py         # on Windows: py paint.py
+```
+
+It starts a small local server (only reachable from your computer) and opens
+`http://127.0.0.1:8765/github-activity-painter.html` in your browser.
+Options: `--port 9000`, `--no-browser`, `--repo path/to/another/repo`. Stop it with `Ctrl+C`.
+
+<!-- SCREENSHOT PLACEHOLDER: docs/screenshots/02-terminal.png
+     A terminal showing `python3 paint.py` and the printed URL. -->
+![Terminal](docs/screenshots/02-terminal.png)
+
+![The interface when it opens](docs/screenshots/01-interface.png)
+
+The header shows the repository, the branch and how many painted commits it already contains.
+A yellow banner warns you if you are not on the default branch.
+
+### 4. Design
+
+All layers are combined: hand-painted cells win, otherwise the darkest of the text and picture layers.
+
+**Text layer (3).** Type your text, pick a font and a level (shade), and place it with *Column (x)* / *Row (y)*,
+the arrow buttons or *Center*. *Pixel 3×5* fits ~13 characters, *Pixel 7 (lowercase)* ~13 lowercase letters,
+*Any font* rasterises a font installed on your computer (better for big, bold fonts).
+
+![Text layer](docs/screenshots/03-text.png)
+
+**Picture layer (4).** Drop a picture on the box, paste it (Ctrl+V) or click to browse.
+- *Height* — rows used (1–7); the width follows the aspect ratio unless you force it.
+- *Shades* — *5 levels* keeps the grey levels (nice for round shapes), *1 colour* gives a crisp silhouette.
+- *Threshold* — how dark a pixel must be to be painted. *Invert* for a light logo on a dark background.
+- *Auto-crop* removes the empty/white margins. Transparent pixels are never painted.
+- *Clear picture* removes the layer.
+
+![Controls](docs/screenshots/05-controls.png)
+
+**Hand painting (1).** Pick a brush level (or press `0`–`4`) and click / drag on the graph. Right-click or
+Shift+drag erases. `Ctrl+Z` undoes. *Fill all* paints every day, *Clear drawing* removes hand-painted cells,
+*Clear everything* resets all layers. Hover any cell to see its date and number of commits.
+
+**Contrast (2).** Set the commits per day of the lightest and darkest shades. The summary at the top right
+tells you how many commits will be created. *Check my current GitHub activity* loads your public profile graph and
+suggests a maximum (your busiest day + 20 %), so the painting stays visible above your real activity.
+
+Your work is saved in the browser automatically. *Export design* saves a `.json` you can share or reuse
+(see [`designs/statur.co.json`](designs/statur.co.json)).
+
+### 5. Create the commits
+
+Fill in the **author name and email** — the email **must be verified on your GitHub account**, otherwise the
+commits will not count. Your private address is fine, or use the no-reply one shown in
+[GitHub → Settings → Emails](https://github.com/settings/emails) (`ID+login@users.noreply.github.com`).
+
+Click **Create commits**. The tool:
+
+1. removes the previous painting, if any (so you can iterate as much as you like),
+2. creates `N` empty commits on each day (dated at noon UTC, so the day is the same in every time zone),
+   in a fraction of a second thanks to `git fast-import`.
+
+The **Current commits in this repository** graph (6) is refreshed and should match your design.
+
+![Repository view after creating the commits](docs/screenshots/06-repository.png)
+
+- **Edit in designer** copies the painting of the repository back into the editor, to modify it.
+- **Delete painted commits** removes them all — your own commits and files are kept.
+
+![After deleting the painted commits](docs/screenshots/07-deleted.png)
+
+### 6. Push — voilà
+
+Click **Push to GitHub**, or in a terminal:
+
+```bash
+git push --force-with-lease
+```
+
+`--force-with-lease` is needed whenever you replaced or deleted a painting (it rewrites the painted part of the
+history); it refuses to overwrite commits you don't have locally. Your profile may take a few minutes to refresh.
+
+<!-- SCREENSHOT PLACEHOLDER: docs/screenshots/09-github-profile.png
+     The final result on the GitHub profile page (https://github.com/<you>), showing the painted
+     contribution graph. -->
+![Result on GitHub](docs/screenshots/09-github-profile.png)
+
+---
+
+## Command line
+
+Everything the interface does with commits is also available without a browser:
+
+```bash
+python3 paint.py status                        # painted commits per day
+python3 paint.py apply designs/statur.co.json  # paint an exported design (replaces the current painting)
+python3 paint.py apply design.json --max 30    # ... with another contrast
+python3 paint.py apply design.json --name "Jane" --email "jane@example.com"
+python3 paint.py clear                         # delete every painted commit
+```
+
+The author defaults to `git config user.name` / `user.email` (or the `PAINTER_NAME` / `PAINTER_EMAIL` environment variables).
+
+### Design file format
+
+```json
+{
+  "app": "github-activity-painter", "version": 1,
+  "range":    { "start": "2025-10-10", "end": "2026-10-10" },
+  "contrast": { "min": 0, "max": 10 },
+  "levels":   { "2025-10-26": 4, "2025-12-02": 2 },
+  "counts":   { "2025-10-26": 10, "2025-12-02": 5 }
+}
+```
+
+`levels` (0–4 per date) are converted with `contrast`; if `counts` is present it is used as-is (it is ignored when
+you pass `--min`/`--max`). With `min > 0`, every day of `range` gets at least `min` commits.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| Nothing shows on my profile | Commits must be on the **default branch**, of a repository that is **not a fork**, with an author email **verified on your account**. Private repo? Enable *Private contributions* in your profile settings. Wait a few minutes. |
+| The painting looks washed out | You have busy days elsewhere: increase the *darkest* number of commits. |
+| `push` is rejected | Use `git push --force-with-lease` (the painting rewrites history). If someone else pushed, pull first. |
+| “HEAD is detached” | `git switch main` (or your default branch). |
+| The page says “Not connected” | Open the URL printed by `python3 paint.py`, not the HTML file directly. You can still design and export a `.json`, then use `paint.py apply`. |
+| I want to remove everything | **Delete painted commits** (or `python3 paint.py clear`), then `git push --force-with-lease`. |
+
+## How it works
+
+- Painted commits are **empty** (same tree as their parent) and carry the trailer `Activity-Painter: true`.
+- **Delete** rebuilds the branch without them: other commits keep their content, author, dates and message
+  (only their parent changes, and any GPG signature is dropped). A commit that has the trailer but changes files is
+  never removed.
+- Nothing leaves your computer except when you push. The server only listens on `127.0.0.1` and rejects
+  cross-site requests.
+
+## Development
+
+```bash
+python3 -m unittest discover tests   # back-end tests (temporary git repositories)
+```
+
+The interface is a single self-contained file, [`github-activity-painter.html`](github-activity-painter.html)
+(no external scripts, light and dark themes); the server and git logic live in [`paint.py`](paint.py).
+
+Inspired by [github_painter](https://github.com/mattrltrent/github_painter) and
+[github-painter.vercel.app](https://github-painter.vercel.app/).
