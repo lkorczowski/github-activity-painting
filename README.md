@@ -3,6 +3,36 @@
 **Display a logo, some text or pixel art in your GitHub contribution graph.**
 Design your picture in a local web page, let the tool create the commits, push — voilà.
 
+## 🤖 Ask Claude Code
+
+Don't want to do it by hand? Paste this into [Claude Code](https://claude.com/claude-code), fill in the first three
+lines, and it does everything for you (it asks before pushing):
+
+```text
+Paint my GitHub contribution graph with https://github.com/lkorczowski/github-activity-painting
+
+What to paint: <some text, the path to a logo, or "start the interface, I'll draw it myself">
+Where: <"community wall" (shared picture, via a pull request) or "my own copy" (can be redone any time)>
+Darkest green = <e.g. 10> commits per day (or "look at my profile and suggest a value")
+
+Steps:
+1. Read that repository's README first and follow it.
+2. Community wall: fork it and clone my fork (gh repo fork lkorczowski/github-activity-painting --clone),
+   then run `python3 paint.py community --no-browser`.
+   My own copy: gh repo create github-activity-painting --public --clone
+   --template lkorczowski/github-activity-painting, and work on its default branch.
+3. Author the commits with my GitHub no-reply email (<id>+<login>@users.noreply.github.com, from `gh api user`),
+   otherwise they won't count and the community wall rejects them.
+4. If I gave text or a logo, build the design (python3 paint.py serve; or write a design JSON as described in
+   the README and use `python3 paint.py apply`), centre it in the graph and show me a preview before creating
+   the commits. Otherwise start the interface and give me its URL.
+5. Create the commits and show me `python3 paint.py status`. Ask me before pushing.
+6. Community wall: push the `my-painting` branch to my fork, open a pull request to
+   lkorczowski/github-activity-painting with gh pr create, then check the bot's result and fix what it reports.
+   My own copy: git push --force-with-lease.
+7. Tell me when it should show up on my profile.
+```
+
 Two ways to play:
 
 | | 🎨 **Community wall** | 🔒 **Your own copy** |
